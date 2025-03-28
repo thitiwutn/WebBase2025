@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace API.Controllers
 {
-    [Route("api/v{version:apiVersion}/products")]
     [ApiController]
+    [Route("api/v{version:apiVersion}/products")]
     [ApiVersion("1.0")]
     public class ProductsController : ControllerBase
     {

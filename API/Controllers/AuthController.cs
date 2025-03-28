@@ -11,8 +11,10 @@ using System.Text;
 
 namespace API.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
+    [Route("api/v{version:apiVersion}/auth")]
+    [ApiVersion("1.0")]
+    [ApiVersion("2.0")]
     public class AuthController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
@@ -25,6 +27,7 @@ namespace API.Controllers
         }
 
         [HttpPost("login")]
+        [MapToApiVersion("1.0")]
         public async Task<IActionResult> Login(LoginRequest request)
         {
             var user = await _context.Users.SingleOrDefaultAsync(u => u.Username == request.Username);
@@ -34,15 +37,33 @@ namespace API.Controllers
             var jwt = GenerateJwtToken(user);
             var refreshToken = GenerateRefreshToken();
 
+            AddRefreshToken(user.Id, refreshToken);
+
             _context.RefreshTokens.Add(new RefreshToken
             {
                 UserId = user.Id,
                 Token = refreshToken,
-                Expires = DateTime.UtcNow.AddMinutes(30)
+                Expires = DateTime.UtcNow.AddMinutes(double.Parse(_config["Jwt:RefreshTokenExpiredMin"]!))
             });
             await _context.SaveChangesAsync();
 
-            return Ok(new { Token = jwt, RefreshToken = refreshToken });
+            return Ok(new { Version = "1.0", Token = jwt, RefreshToken = refreshToken });
+        }
+
+        [HttpPost("login")]
+        [MapToApiVersion("2.0")]
+        public async Task<IActionResult> LoginV2(LoginRequest request)
+        {
+            var user = await _context.Users.SingleOrDefaultAsync(u => u.Username == request.Username);
+            if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+                return Unauthorized();
+
+            var jwt = GenerateJwtToken(user);
+            var refreshToken = GenerateRefreshToken();
+
+            AddRefreshToken(user.Id, refreshToken);
+
+            return Ok(new { Version = "2.0", Token = jwt, RefreshToken = refreshToken });
         }
 
         [HttpPost("refresh-token")]
@@ -59,16 +80,40 @@ namespace API.Controllers
             var newJwt = GenerateJwtToken(token.User!);
             var newRefreshToken = GenerateRefreshToken();
 
-            _context.RefreshTokens.Add(new RefreshToken
-            {
-                UserId = token.UserId,
-                Token = newRefreshToken,
-                Expires = DateTime.UtcNow.AddMinutes(10)
-            });
-
-            await _context.SaveChangesAsync();
+            AddRefreshToken(token.UserId, newRefreshToken);
 
             return Ok(new { Token = newJwt, RefreshToken = newRefreshToken });
+        }
+
+        [HttpPost("register")]
+        public async Task<IActionResult> Register(RegisterRequest request)
+        {
+            if (await _context.Users.AnyAsync(u => u.Username == request.Username))
+                return BadRequest("Username is already taken");
+
+            var user = new User
+            {
+                Username = request.Username,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+                Role = "User" // Default role
+            };
+
+            _context.Users.Add(user);
+            await _context.SaveChangesAsync();
+
+            return Ok("User registered successfully");
+        }
+
+        private void AddRefreshToken(int userId, string refreshToken)
+        {
+            _context.RefreshTokens.Add(new RefreshToken
+            {
+                UserId = userId,
+                Token = refreshToken,
+                Expires = DateTime.UtcNow.AddMinutes(double.Parse(_config["Jwt:RefreshTokenExpiredMin"]!))
+            });
+
+            _context.SaveChanges();
         }
 
         private string GenerateJwtToken(User user)
@@ -80,10 +125,10 @@ namespace API.Controllers
             {
                 Subject = new ClaimsIdentity(new[]
                 {
-            new Claim(ClaimTypes.Name, user.Username),
-            new Claim(ClaimTypes.Role, user.Role)
-        }),
-                Expires = DateTime.UtcNow.AddMinutes(5),
+                    new Claim(ClaimTypes.Name, user.Username),
+                    new Claim(ClaimTypes.Role, user.Role)
+                }),
+                Expires = DateTime.UtcNow.AddMinutes(double.Parse(_config["Jwt:AccessTokenExpiredMin"]!)),
                 Issuer = _config["Jwt:Issuer"],
                 Audience = _config["Jwt:Audience"],
                 SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256)

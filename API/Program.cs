@@ -9,16 +9,15 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
 
 var builder = WebApplication.CreateBuilder(args);
-
-// Add services to the container.
+// Get configuration from appsettings.json
+builder.Configuration.AddJsonFile("appsettings.json");
 
 builder.Services.AddControllers();
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// 🔐 JWT Authentication configuration
-var key = Encoding.ASCII.GetBytes("YourVerySecureKey12345!");
+
 builder.Services.AddAuthentication(opt =>
 {
     opt.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -30,31 +29,25 @@ builder.Services.AddAuthentication(opt =>
         ValidateIssuer = true,
         ValidateAudience = true,
         ValidateIssuerSigningKey = true,
-        ValidIssuer = "yourissuer.com",
-        ValidAudience = "youraudience.com",
-        IssuerSigningKey = new SymmetricSecurityKey(key)
+        ValidIssuer = builder.Configuration["Jwt:Issuer"],
+        ValidAudience = builder.Configuration["Jwt:Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(builder.Configuration["Jwt:Key"]!))
     };
 });
 
-// ✅ Role-based Authorization configuration
 builder.Services.AddAuthorizationBuilder()
-    // ✅ Role-based Authorization configuration
     .AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"))
-    // ✅ Role-based Authorization configuration
     .AddPolicy("UserOnly", policy => policy.RequireRole("User", "Admin"));
 
-// 📌 API Versioning configuration
 builder.Services.AddApiVersioning(options =>
 {
     options.DefaultApiVersion = new ApiVersion(1, 0);
     options.AssumeDefaultVersionWhenUnspecified = true;
     options.ReportApiVersions = true;
 
-    // เรียกเวอร์ชันล่าสุดเมื่อเวอร์ชันที่ขอไม่มี
     options.ApiVersionSelector = new CurrentImplementationApiVersionSelector(options);
 });
 
-// API Explorer สำหรับ Swagger
 builder.Services.AddVersionedApiExplorer(setup =>
 {
     setup.GroupNameFormat = "'v'VVV";
@@ -62,7 +55,6 @@ builder.Services.AddVersionedApiExplorer(setup =>
 });
 
 builder.Services.AddEndpointsApiExplorer();
-// Swagger configuration
 builder.Services.AddSwaggerGen(options =>
 {
     var provider = builder.Services.BuildServiceProvider()
@@ -77,7 +69,8 @@ builder.Services.AddSwaggerGen(options =>
         });
     }
 
-    // เพิ่ม JWT Authentication ใน Swagger (Optional)
+    options.TagActionsBy(api => new[] { api.ActionDescriptor.RouteValues["controller"] });
+
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         In = ParameterLocation.Header,
@@ -99,11 +92,6 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 });
-
-
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
